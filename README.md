@@ -1,24 +1,149 @@
-# **TimescaleDB Multi-node**
+<!---
+This file and its contents are licensed under the Apache License 2.0.
+Please see the included NOTICE for copyright information and LICENSE for a copy of the license.
+-->
 
-TimescaleDB Multi-node is a distributed database solution built on top of the PostgreSQL database. It offers advanced features such as automatic data sharding and rebalancing, high availability and fault tolerance, and support for distributed SQL queries, making it a scalable solution for handling large amounts of time-series data.
+# Call for Maintainers
 
-**Features**
+This Helm chart will no longer maintained by the Timescale team going forward.
+We are looking for some awesome community maintainers who are interested in
+becoming maintainers and contributors.  For now please use the
+[timescaledb-single](https://github.com/timescale/helm-charts/tree/master/charts/timescaledb-single)
+chart going forward.
 
-- Automatic data sharding and rebalancing: TimescaleDB Multi-node allows for horizontal scaling of the database, making it possible to handle increasing amounts of data without sacrificing performance. The nodes communicate with each other through a distributed consensus algorithm and automatically handle failures and rebalancing of data.
-- High availability and fault tolerance: TimescaleDB Multi-node is designed to handle failures and ensure high availability of data. It replicates data across multiple nodes, allowing for failover and ensuring that the data is always available.
-- Support for distributed SQL queries: TimescaleDB Multi-node offers support for distributed SQL queries, allowing users to run queries across multiple nodes in a cluster.
-- Data compression: TimescaleDB Multi-node offers data compression to reduce storage requirements and improve query performance.
-- Continuous aggregates: TimescaleDB Multi-node offers continuous aggregates to precompute frequently used aggregates and speed up queries.
-- Support for complex SQL queries: TimescaleDB Multi-node offers support for complex SQL queries, allowing users to perform advanced analytics on time-series data.
+# TimescaleDB Multinode
 
-**Scalability**
+This directory contains a Helm chart to deploy a multinode [TimescaleDB](https://github.com/timescale/timescaledb/) cluster.
+This chart will do the following:
 
-TimescaleDB Multi-node is a scalable solution for handling time-series data. Users can deploy a cluster of database nodes that work together to store and query time-series data. The nodes communicate with each other through a distributed consensus algorithm and automatically handle failures and rebalancing of data. This allows for horizontal scaling of the database, making it possible to handle increasing amounts of data without sacrificing performance.
+- Creates a single TimescaleDB **Access Node** using a Kubernetes [StatefulSet](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/).
+- Creates multiple pods (by default 3) containing **Data Nodes** using another Kubernetes StatefulSet
+- Each pod has a container created using a Docker image which includes the TimescaleDB multinode sources
 
-**Integration**
+<img src="./timescaledb-multi.png" width="640" />
 
-TimescaleDB Multi-node can be easily integrated with various data sources and tools, making it a versatile solution for managing time-series data.
+When deploying on AWS EKS:
+- An AWS Elastic Load Balancer (ELB) is configured to handle routing incoming traffic to the Access Node.
 
-**Conclusion**
+## Installing
 
-TimescaleDB Multi-node is a powerful and scalable distributed database solution for managing time-series data. With its advanced features such as automatic data sharding and rebalancing, high availability and fault tolerance, and support for distributed SQL queries, it offers a scalable solution for handling large amounts of time-series data. Its integration capabilities make it a versatile solution for managing time-series data in various applications.
+To install the chart as a release and name it `my-release`:
+
+```console
+helm upgrade --install my-release .
+```
+
+You can override parameters using the `--set key=value[,key=value]` argument to `helm upgrade --install`,
+e.g., to install the chart with randomly generated passwords:
+
+```console
+random_password () { < /dev/urandom tr -dc _A-Z-a-z-0-9 | head -c32; }
+helm upgrade --install my-release . \
+    --set credentials.accessNode.superuser="$(random_password)"
+```
+
+Alternatively, a YAML file that specifies the values for the parameters can be provided while installing the chart. For example,
+```console
+helm upgrade --install my-release -f myvalues.yaml .
+```
+
+For details about what parameters you can set, have a look at the [Administrator Guide](admin-guide.md#configure)
+
+## Using a local image
+
+During development, it is practical to be able to use a locally built image of TimescaleDB multinode without having to push it to a registry. This can be done as follows:
+
+```console
+# Setup the environment to use Minikube's Docker daemon
+eval $(minikube docker-env)
+
+# Build a new image (this requires being in the TimescaleDB source directory):
+IMAGE_NAME=mytsdb TAG_NAME=build-1 ../scripts/docker-build.sh
+```
+If you don't specify an image name and tag name, like above, make note of the name and the tag of the new image that gets built. Then launch multinode TimescaleDB using the new image:
+
+```console
+helm upgrade --install my-release --set image.repository=mytsdb --set image.tag=build-1 .
+```
+
+## Connecting to TimescaleDBs
+
+Once the multinode deployment of TimescaleDB is running, you can connect to the access node:
+
+```console
+kubectl exec -it my-release-timescaledb-access-0 -- psql -U postgres
+```
+
+### Connecting from outside Kubernetes
+If you want to connect directly to the access node, without going
+through Kubernetes, you need to know the host (and port) to connect
+to. Use `kubectl` to get that information:
+
+```console
+kubectl get service/my-release-timescaledb
+```
+```
+NAME                             TYPE           CLUSTER-IP      EXTERNAL-IP                PORT(S)          AGE
+service/my-release-timescaledb   LoadBalancer   10.100.157.80   verylongname.example.com   5432:32641/TCP   79s
+```
+
+Using the External IP for the service (which will route through the
+LoadBalancer to the Access Node), you can connect via `psql` using the
+following (default example superuser password is `tea`)
+
+```console
+psql -h verylongname.example.com -U postgres
+```
+```
+Password for user postgres:
+postgres=#
+```
+
+From here, you can start creating users and databases, for example, using the above `psql` session:
+```sql
+CREATE USER example WITH PASSWORD 'thisIsInsecure';
+CREATE DATABASE example OWNER example;
+```
+
+Connect to the example database with the example user:
+
+```console
+psql -h verylongname.example.com -U example -d example
+```
+
+This should get you into the example database, from here on you can follow
+our [TimescaleDB > Tutorial: Scaling out TimescaleDB](https://docs.timescale.com/clustering/tutorials/clustering)
+to create distributed hypertables and start using multinode TimescaleDB.
+
+### Connecting from another pod
+
+From inside a pod in the Kubernetes cluster, you need to use the
+internal DNS address, e.g.,
+`my-release-timescaledb.default.svc.cluster.local`. For instance,
+let's run a new pod where we can run the PostgreSQL client:
+
+```console
+kubectl run -i --tty --rm psql --image=postgres --restart=Never -- bash -il
+```
+
+Then from within the Pod, connect to the access node:
+
+```console
+$ psql -U postgres -h my-release-timescaledb.default.svc.cluster.local postgres
+```
+
+provide the password `tea` followed by "Enter".
+
+## Cleanup
+
+To remove the spawned pods you can run a simple
+```console
+helm delete my-release --purge
+```
+Some items, (pvc's for example) are not immediately removed.
+To also purge these items, have a look at the [Administrator Guide](admin-guide.md#cleanup)
+
+## Further reading
+
+- [Administrator Guide](admin-guide.md)
+- [TimescaleDB Documentation](https://docs.timescale.com/clustering/main)
