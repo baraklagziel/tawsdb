@@ -7,9 +7,8 @@ Please see the included NOTICE for copyright information and LICENSE for a copy 
 
 This Helm chart will no longer maintained by the Timescale team going forward.
 We are looking for some awesome community maintainers who are interested in
-becoming maintainers and contributors.  For now please use the
+becoming maintainers an contributors.  For now please use the
 [timescaledb-single](https://github.com/timescale/helm-charts/tree/master/charts/timescaledb-single)
-chart going forward.
 
 # TimescaleDB Multinode
 
